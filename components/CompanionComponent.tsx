@@ -40,7 +40,7 @@ const CompanionComponent = ({ companionId, subject, topic, name, userName, userI
             setCallStatus(CallStatus.FINISHED);
             addToSessionHistory(companionId)
         }
-
+//this is adding transcript
         const onMessage = (message: Message) => {
             if(message.type === 'transcript' && message.transcriptType === 'final') {
                 const newMessage= { role: message.role, content: message.transcript}
@@ -158,7 +158,7 @@ const CompanionComponent = ({ companionId, subject, topic, name, userName, userI
                                 </p>
                             )
                         } else {
-                           return <p key={index} className="text-primary max-sm:text-sm">
+                            return <p key={index} className="text-primary max-sm:text-sm">
                                 {userName}: {message.content}
                             </p>
                         }
