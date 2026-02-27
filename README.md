@@ -1,36 +1,164 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Converso – Real-Time AI Teaching Platform
 
-## Getting Started
+Converso is a full-stack Next.js app where users can create AI companions and run real-time voice learning sessions.
 
-First, run the development server:
+## Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Real-time voice tutoring sessions powered by Vapi
+- Companion builder with subject, topic, voice, style, and duration
+- Companion library with subject/topic filtering
+- Bookmark companions and track recent session history
+- Personal dashboard (`/my-journey`) with:
+	- bookmarked companions
+	- recent sessions
+	- user-created companions
+- Clerk authentication + subscription gating via Clerk Pricing Table
+- Supabase-backed persistence for companions, sessions, and bookmarks
+- Sentry instrumentation configured for Next.js
+
+## Tech Stack
+
+- Next.js 16 (App Router, React 19)
+- TypeScript
+- Tailwind CSS
+- Clerk (auth + billing UI)
+- Supabase (database)
+- Vapi Web SDK (voice sessions)
+- Sentry (monitoring)
+
+## Routes
+
+- `/` – home (popular companions + recent sessions)
+- `/companions` – companion library
+- `/companions/new` – create companion
+- `/companions/[id]` – live companion session
+- `/my-journey` – profile, bookmarks, history
+- `/subscription` – Clerk pricing table
+
+## Prerequisites
+
+- Node.js 20+
+- npm 10+
+- Clerk account/project
+- Supabase project
+- Vapi account + web token
+
+## Environment Variables
+
+Create `.env.local` in the project root:
+
+```env
+# Clerk
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
+CLERK_SECRET_KEY=
+NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/
+NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/
+
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=
+
+# Vapi
+NEXT_PUBLIC_VAPI_WEB_TOKEN=
+
+# Sentry (optional for local)
+SENTRY_AUTH_TOKEN=
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Installation & Local Run
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+App runs at `http://localhost:3000`.
 
-## Learn More
+## Database Setup (Supabase)
 
-To learn more about Next.js, take a look at the following resources:
+Run the following SQL in the Supabase SQL Editor.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```sql
+create extension if not exists "pgcrypto";
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+create table if not exists public.companions (
+	id uuid primary key default gen_random_uuid(),
+	name text not null,
+	subject text not null,
+	topic text not null,
+	voice text not null,
+	style text not null,
+	duration integer not null,
+	author text not null,
+	bookmarked boolean not null default false,
+	created_at timestamptz not null default now()
+);
 
-## Deploy on Vercel
+create table if not exists public.session_history (
+	id uuid primary key default gen_random_uuid(),
+	companion_id uuid not null references public.companions(id) on delete cascade,
+	user_id text not null,
+	created_at timestamptz not null default now()
+);
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+create table if not exists public.bookmarks (
+	id uuid primary key default gen_random_uuid(),
+	companion_id uuid not null references public.companions(id) on delete cascade,
+	user_id text not null,
+	created_at timestamptz not null default now(),
+	unique (companion_id, user_id)
+);
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Build & Production
+
+```bash
+npm run build
+npm run start
+```
+
+## Troubleshooting
+
+### 1) `Could not find the table 'public.bookmarks' in the schema cache`
+
+Cause: the `bookmarks` table is missing in Supabase.
+
+Fix: create the table using the SQL in the **Database Setup** section.
+
+### 2) Webpack `.pack.gz` cache restore errors on Windows/OneDrive
+
+Cause: filesystem cache lock/corruption in `.next/dev/cache/webpack`.
+
+Fixes:
+- delete `.next` and restart
+- keep the project outside synced OneDrive folders when possible
+
+### 3) Session errors during voice call
+
+Check:
+- valid `NEXT_PUBLIC_VAPI_WEB_TOKEN`
+- provider config/credits (Vapi/OpenAI/Deepgram/11labs)
+- only one active session per user/tab during testing
+
+## Project Structure
+
+```text
+app/
+	companions/
+	my-journey/
+	subscription/
+components/
+lib/
+	actions/
+	supabase.ts
+	vapi.sdk.ts
+constants/
+types/
+```
+
+## Notes
+
+- This app uses Clerk server auth inside server actions.
+- Bookmark/session data in UI depends on Supabase relational queries.
+- Sentry files are included and can be enabled/adjusted per environment.
