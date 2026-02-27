@@ -1,18 +1,65 @@
 'use client';
 
-import {useEffect, useRef, useState} from 'react'
-import {cn, configureAssistant, getSubjectColor} from "@/lib/utils";
-import {vapi} from "@/lib/vapi.sdk";
+import { useEffect, useRef, useState } from 'react'
+import { cn, configureAssistant, getSubjectColor } from "@/lib/utils";
+import { vapi } from "@/lib/vapi.sdk";
 import Image from "next/image";
-import Lottie, {LottieRefCurrentProps} from "lottie-react";
+import Lottie, { LottieRefCurrentProps } from "lottie-react";
 import soundwaves from '@/constants/soundwaves.json'
-import {addToSessionHistory} from "@/lib/actions/companion.actions";
+import { addToSessionHistory } from "@/lib/actions/companion.actions";
 
 enum CallStatus {
     INACTIVE = 'INACTIVE',
     CONNECTING = 'CONNECTING',
     ACTIVE = 'ACTIVE',
     FINISHED = 'FINISHED',
+}
+
+const isExpectedSessionError = (error: unknown) => {
+    const message = getErrorMessage(error);
+    return message.includes('Meeting ended due to ejection')
+        || message.includes('Meeting has ended')
+        || message.includes('WASM_OR_WORKER_NOT_READY')
+        || message.includes('Ignoring settings for browser- or platform-unsupported input processor(s): audio')
+        || message.includes('unsupported input processor');
+}
+
+const getErrorMessage = (error: unknown) => {
+    if (error instanceof Error) return error.message;
+    if (typeof error === 'string') return error;
+
+    if (error && typeof error === 'object') {
+        const candidate = error as Record<string, unknown>;
+        const messageFromObject =
+            candidate.message
+            || candidate.error
+            || candidate.reason
+            || candidate.details;
+
+        if (typeof messageFromObject === 'string') {
+            return messageFromObject;
+        }
+
+        try {
+            return JSON.stringify(candidate);
+        } catch {
+            return 'Unknown session error object';
+        }
+    }
+
+    return String(error);
+}
+
+const getErrorMeta = (error: unknown) => {
+    if (!error || typeof error !== 'object') return {};
+
+    const candidate = error as Record<string, unknown>;
+    return {
+        code: candidate.code,
+        type: candidate.type,
+        reason: candidate.reason,
+        details: candidate.details,
+    };
 }
 
 const CompanionComponent = ({ companionId, subject, topic, name, userName, userImage, style, voice }: CompanionComponentProps) => {
@@ -24,8 +71,8 @@ const CompanionComponent = ({ companionId, subject, topic, name, userName, userI
     const lottieRef = useRef<LottieRefCurrentProps>(null);
 
     useEffect(() => {
-        if(lottieRef) {
-            if(isSpeaking) {
+        if (lottieRef) {
+            if (isSpeaking) {
                 lottieRef.current?.play()
             } else {
                 lottieRef.current?.stop()
@@ -38,12 +85,14 @@ const CompanionComponent = ({ companionId, subject, topic, name, userName, userI
 
         const onCallEnd = () => {
             setCallStatus(CallStatus.FINISHED);
-            addToSessionHistory(companionId)
+            addToSessionHistory(companionId).catch((error) => {
+                console.warn('Failed to save session history:', error);
+            });
         }
-//this is adding transcript
+        //this is adding transcript
         const onMessage = (message: Message) => {
-            if(message.type === 'transcript' && message.transcriptType === 'final') {
-                const newMessage= { role: message.role, content: message.transcript}
+            if (message.type === 'transcript' && message.transcriptType === 'final') {
+                const newMessage = { role: message.role, content: message.transcript }
                 setMessages((prev) => [newMessage, ...prev])
             }
         }
@@ -51,7 +100,19 @@ const CompanionComponent = ({ companionId, subject, topic, name, userName, userI
         const onSpeechStart = () => setIsSpeaking(true);
         const onSpeechEnd = () => setIsSpeaking(false);
 
-        const onError = (error: Error) => console.log('Error', error);
+        const onError = (error: Error) => {
+            if (isExpectedSessionError(error)) {
+                setCallStatus(CallStatus.FINISHED);
+                return;
+            }
+
+            console.error('Session error:', {
+                message: getErrorMessage(error),
+                ...getErrorMeta(error),
+                raw: error,
+            });
+            setCallStatus(CallStatus.INACTIVE);
+        };
 
         vapi.on('call-start', onCallStart);
         vapi.on('call-end', onCallEnd);
@@ -68,7 +129,7 @@ const CompanionComponent = ({ companionId, subject, topic, name, userName, userI
             vapi.off('speech-start', onSpeechStart);
             vapi.off('speech-end', onSpeechEnd);
         }
-    }, []);
+    }, [companionId]);
 
     const toggleMicrophone = () => {
         const isMuted = vapi.isMuted();
@@ -77,6 +138,10 @@ const CompanionComponent = ({ companionId, subject, topic, name, userName, userI
     }
 
     const handleCall = async () => {
+        if (callStatus === CallStatus.CONNECTING || callStatus === CallStatus.ACTIVE) {
+            return;
+        }
+
         setCallStatus(CallStatus.CONNECTING)
 
         const assistantOverrides = {
@@ -85,30 +150,51 @@ const CompanionComponent = ({ companionId, subject, topic, name, userName, userI
             serverMessages: [],
         }
 
-        // @ts-expect-error
-        vapi.start(configureAssistant(voice, style), assistantOverrides)
+        try {
+            // @ts-expect-error
+            await vapi.start(configureAssistant(voice, style), assistantOverrides)
+        } catch (error) {
+            if (!isExpectedSessionError(error)) {
+                console.error('Failed to start session:', {
+                    message: getErrorMessage(error),
+                    ...getErrorMeta(error),
+                    raw: error,
+                });
+            }
+            setCallStatus(CallStatus.INACTIVE)
+        }
     }
 
     const handleDisconnect = () => {
         setCallStatus(CallStatus.FINISHED)
-        vapi.stop()
+        try {
+            vapi.stop()
+        } catch (error) {
+            if (!isExpectedSessionError(error)) {
+                console.error('Failed to stop session:', {
+                    message: getErrorMessage(error),
+                    ...getErrorMeta(error),
+                    raw: error,
+                });
+            }
+        }
     }
 
     return (
         <section className="flex flex-col h-[70vh]">
             <section className="flex gap-8 max-sm:flex-col">
                 <div className="companion-section">
-                    <div className="companion-avatar" style={{ backgroundColor: getSubjectColor(subject)}}>
+                    <div className="companion-avatar" style={{ backgroundColor: getSubjectColor(subject) }}>
                         <div
                             className={
-                            cn(
-                                'absolute transition-opacity duration-1000', callStatus === CallStatus.FINISHED || callStatus === CallStatus.INACTIVE ? 'opacity-1001' : 'opacity-0', callStatus === CallStatus.CONNECTING && 'opacity-100 animate-pulse'
-                            )
-                        }>
+                                cn(
+                                    'absolute transition-opacity duration-1000', callStatus === CallStatus.FINISHED || callStatus === CallStatus.INACTIVE ? 'opacity-1001' : 'opacity-0', callStatus === CallStatus.CONNECTING && 'opacity-100 animate-pulse'
+                                )
+                            }>
                             <Image src={`/icons/${subject}.svg`} alt={subject} width={150} height={150} className="max-sm:w-fit" />
                         </div>
 
-                        <div className={cn('absolute transition-opacity duration-1000', callStatus === CallStatus.ACTIVE ? 'opacity-100': 'opacity-0')}>
+                        <div className={cn('absolute transition-opacity duration-1000', callStatus === CallStatus.ACTIVE ? 'opacity-100' : 'opacity-0')}>
                             <Lottie
                                 lottieRef={lottieRef}
                                 animationData={soundwaves}
@@ -133,12 +219,12 @@ const CompanionComponent = ({ companionId, subject, topic, name, userName, userI
                             {isMuted ? 'Turn on microphone' : 'Turn off microphone'}
                         </p>
                     </button>
-                    <button className={cn('rounded-lg py-2 cursor-pointer transition-colors w-full text-white', callStatus ===CallStatus.ACTIVE ? 'bg-red-700' : 'bg-primary', callStatus === CallStatus.CONNECTING && 'animate-pulse')} onClick={callStatus === CallStatus.ACTIVE ? handleDisconnect : handleCall}>
+                    <button className={cn('rounded-lg py-2 cursor-pointer transition-colors w-full text-white', callStatus === CallStatus.ACTIVE ? 'bg-red-700' : 'bg-primary', callStatus === CallStatus.CONNECTING && 'animate-pulse')} onClick={callStatus === CallStatus.ACTIVE ? handleDisconnect : handleCall} disabled={callStatus === CallStatus.CONNECTING}>
                         {callStatus === CallStatus.ACTIVE
-                        ? "End Session"
-                        : callStatus === CallStatus.CONNECTING
-                            ? 'Connecting'
-                        : 'Start Session'
+                            ? "End Session"
+                            : callStatus === CallStatus.CONNECTING
+                                ? 'Connecting'
+                                : 'Start Session'
                         }
                     </button>
                 </div>
@@ -147,13 +233,13 @@ const CompanionComponent = ({ companionId, subject, topic, name, userName, userI
             <section className="transcript">
                 <div className="transcript-message no-scrollbar">
                     {messages.map((message, index) => {
-                        if(message.role === 'assistant') {
+                        if (message.role === 'assistant') {
                             return (
                                 <p key={index} className="max-sm:text-sm">
                                     {
                                         name
                                             .split(' ')[0]
-                                            .replace('/[.,]/g, ','')
+                                            .replace('/[.,]/g, ', '')
                                     }: {message.content}
                                 </p>
                             )

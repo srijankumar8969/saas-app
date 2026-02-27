@@ -2,9 +2,19 @@ import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  images:{
-    remotePatterns:[
-      {hostname:'img.clerk.com'}
+  turbopack: {
+    root: process.cwd(),
+  },
+  webpack: (config, { dev }) => {
+    if (dev) {
+      config.cache = false;
+    }
+
+    return config;
+  },
+  images: {
+    remotePatterns: [
+      { hostname: 'img.clerk.com' }
     ]
   }
 };

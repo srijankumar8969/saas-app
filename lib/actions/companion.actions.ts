@@ -1,7 +1,7 @@
 'use server';
 
-import {auth} from "@clerk/nextjs/server";
-import {createSupabaseClient} from "@/lib/supabase";
+import { auth } from "@clerk/nextjs/server";
+import { createSupabaseClient } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
 
 export const createCompanion = async (formData: CreateCompanion) => {
@@ -10,34 +10,39 @@ export const createCompanion = async (formData: CreateCompanion) => {
 
     const { data, error } = await supabase
         .from('companions')
-        .insert({...formData, author })
+        .insert({ ...formData, author })
         .select();
 
-    if(error || !data) throw new Error(error?.message || 'Failed to create a companion');
+    if (error || !data) throw new Error(error?.message || 'Failed to create a companion');
 
     return data[0];
 }
 export const getAllCompanions = async ({ limit = 10, page = 1, subject, topic }: GetAllCompanions) => {
-    const supabase = createSupabaseClient();
+    try {
+        const supabase = createSupabaseClient();
 
-    let query = supabase.from('companions').select();
+        let query = supabase.from('companions').select();
 
-    if(subject && topic) {
-        query = query.ilike('subject', `%${subject}%`)
-            .or(`topic.ilike.%${topic}%,name.ilike.%${topic}%`)
-    } else if(subject) {
-        query = query.ilike('subject', `%${subject}%`)
-    } else if(topic) {
-        query = query.or(`topic.ilike.%${topic}%,name.ilike.%${topic}%`)
+        if (subject && topic) {
+            query = query.ilike('subject', `%${subject}%`)
+                .or(`topic.ilike.%${topic}%,name.ilike.%${topic}%`)
+        } else if (subject) {
+            query = query.ilike('subject', `%${subject}%`)
+        } else if (topic) {
+            query = query.or(`topic.ilike.%${topic}%,name.ilike.%${topic}%`)
+        }
+
+        query = query.range((page - 1) * limit, page * limit - 1);
+
+        const { data: companions, error } = await query;
+
+        if (error) throw new Error(error.message);
+
+        return companions;
+    } catch (error) {
+        console.error('Failed to fetch companions:', error);
+        return [];
     }
-
-    query = query.range((page - 1) * limit, page * limit - 1);
-
-    const { data: companions, error } = await query;
-
-    if(error) throw new Error(error.message);
-
-    return companions;
 }
 
 export const getCompanion = async (id: string) => {
@@ -48,7 +53,7 @@ export const getCompanion = async (id: string) => {
         .select()
         .eq('id', id);
 
-    if(error) return console.log(error);
+    if (error) return console.log(error);
 
     return data[0];
 }
@@ -62,22 +67,27 @@ export const addToSessionHistory = async (companionId: string) => {
             user_id: userId,
         })
 
-    if(error) throw new Error(error.message);
+    if (error) throw new Error(error.message);
 
     return data;
 }
 
 export const getRecentSessions = async (limit = 10) => {
-    const supabase = createSupabaseClient();
-    const { data, error } = await supabase
-        .from('session_history')
-        .select(`companions:companion_id (*)`)
-        .order('created_at', { ascending: false })
-        .limit(limit)
+    try {
+        const supabase = createSupabaseClient();
+        const { data, error } = await supabase
+            .from('session_history')
+            .select(`companions:companion_id (*)`)
+            .order('created_at', { ascending: false })
+            .limit(limit)
 
-    if(error) throw new Error(error.message);
+        if (error) throw new Error(error.message);
 
-    return data.map(({ companions }) => companions);
+        return data.map(({ companions }) => companions);
+    } catch (error) {
+        console.error('Failed to fetch recent sessions:', error);
+        return [];
+    }
 }
 
 export const getUserSessions = async (userId: string, limit = 10) => {
@@ -89,7 +99,7 @@ export const getUserSessions = async (userId: string, limit = 10) => {
         .order('created_at', { ascending: false })
         .limit(limit)
 
-    if(error) throw new Error(error.message);
+    if (error) throw new Error(error.message);
 
     return data.map(({ companions }) => companions);
 }
@@ -101,7 +111,7 @@ export const getUserCompanions = async (userId: string) => {
         .select()
         .eq('author', userId)
 
-    if(error) throw new Error(error.message);
+    if (error) throw new Error(error.message);
 
     return data;
 }
@@ -112,11 +122,11 @@ export const newCompanionPermissions = async () => {
 
     let limit = 0;
 
-    if(has({ plan: 'pro' })) {
+    if (has({ plan: 'pro' })) {
         return true;
-    } else if(has({ feature: "3_companion_limit" })) {
+    } else if (has({ feature: "3_companion_limit" })) {
         limit = 3;
-    } else if(has({ feature: "10_companion_limit" })) {
+    } else if (has({ feature: "10_companion_limit" })) {
         limit = 10;
     }
 
@@ -125,11 +135,11 @@ export const newCompanionPermissions = async () => {
         .select('id', { count: 'exact' })
         .eq('author', userId)
 
-    if(error) throw new Error(error.message);
+    if (error) throw new Error(error.message);
 
     const companionCount = data?.length;
 
-    if(companionCount >= limit) {
+    if (companionCount >= limit) {
         return false
     } else {
         return true;
